@@ -13,6 +13,10 @@
 #define C 0.0000000876741
 #define SWITCH_PIN 8
 
+#define RX 5
+#define TX 6
+#define SAMPLES 5
+
 #define ARG_ON "ON"
 #define ARG_OFF "OFF"
 #define CMD_SETRELAY "SETRELAY"
@@ -21,12 +25,20 @@
 #define CMD_OK "OK"
 #define CMD_WHAT "WHAT?"
 
+
 boolean isRelayOn = false;
 int switchStatus = HIGH;
 int lastSwitchStatus = HIGH;
 long lastDebounceTime = 0;  // the last time the output pin was toggled
 long debounceDelay = 50;    // the debounce time; increase if the output flickers
-SerialCommand SCmd;
+
+// SerialCommand SCmd;
+SoftwareSerial EspSerial = SoftwareSerial(RX,TX);
+SerialCommand SCmd(EspSerial);
+
+int currentSample = 0;
+double currentTemperature = 0;
+double temperatures[SAMPLES];
 
 // Steinhart-Hart Thermistor Equation:
 // Temperature in Kelvin = 1 / {A + B[ln(R)] + C[ln(R)]^3}
@@ -66,7 +78,8 @@ void sendToSerial(const char *command, const char *argument) {
   } else {
     snprintf(_buffer, sizeof(_buffer) - 1, "+%s\n", command);
   }
-  Serial.print(_buffer);
+  // Serial.print(_buffer);
+  EspSerial.print(_buffer);
 }
 
 void SerialSetRelay() {
@@ -91,7 +104,7 @@ void SerialGetRelay() {
 
 void SerialGetTemperature() {
   char _strTemp[10];
-  double t = getTemperature();
+  double t = currentTemperature; // getTemperature();
   memset(_strTemp, 0, sizeof(_strTemp));
   dtostrf(t, 2, 1, _strTemp);
   sendToSerial(CMD_GETTEMP, _strTemp);
@@ -118,6 +131,24 @@ void readInputs() {
     }
   }
   lastSwitchStatus = reading;
+
+  // read a new sample
+  temperatures[currentSample] = getTemperature();
+  currentSample = (currentSample + 1) % SAMPLES;
+  // update 
+  int samplesCount = 0;
+  double t = 0;
+  for (int i = 0; i < SAMPLES; i++) {
+    if (temperatures[i] > 0) {
+      t += temperatures[i];
+      samplesCount++;  
+    }
+  }
+  if (samplesCount > 0) {
+    currentTemperature = t / samplesCount;
+  } else {
+    currentTemperature = 0;
+  }
 }
 
 void setup() {
@@ -129,8 +160,13 @@ void setup() {
   
   setRelay(false);
 
+  // clear and init temperature sampling array
+  memset(&temperatures, 0, sizeof(temperatures));
+
   // Serial manangement
-  Serial.begin(SERIAL_BAUD);  
+  Serial.begin(SERIAL_BAUD); 
+  EspSerial.begin(SERIAL_BAUD);
+  delay(10); 
   // Setup callbacks for SerialCommand commands 
   SCmd.addCommand(CMD_SETRELAY, SerialSetRelay);
   SCmd.addCommand(CMD_GETRELAY, SerialGetRelay);
@@ -141,5 +177,6 @@ void setup() {
 
 void loop() {
   SCmd.readSerial();
+  delay(10);
   readInputs();
 }
